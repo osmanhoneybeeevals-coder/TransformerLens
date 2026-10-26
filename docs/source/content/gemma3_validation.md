@@ -55,8 +55,15 @@ using `atol=1e-4, rtol=0`. Run it from a contributor checkout:
 uv run pytest tests/integration/model_bridge/test_gemma3_adapter.py
 ```
 
-This test does not certify pretrained checkpoints, GPU/reduced-precision runs,
-multimodal input, or a historical bug report's reproducer. Check the exact
+The validation run with Python 3.12.14, PyTorch 2.11.0+cu130 and Transformers
+5.13.0 passed on CPU float32: raw maximum absolute error was zero at all four
+lengths, and maximum `log_softmax` error was 9.5367431640625e-7. These checks
+required no additional normalization or dtype changes. Recovering the original
+historical reproducer is not a prerequisite for this documentation and
+regression-test follow-through.
+
+This test does not certify pretrained checkpoints, GPU/float16/bfloat16 runs,
+multimodal input, or reproduce the historical failure. Check the exact
 checkpoint's entry in the [model table](model_tables.md), including individual
 phase results and notes. A missing phase result is not a passing result, and a
 registry record is not a fresh run on your installed release.
@@ -92,6 +99,7 @@ Full traceback and minimal loading code:
 ```
 
 For a logits mismatch, also include exact input tokens and masks, the independent
-HF comparison, measured errors and tolerances. For a claimed regression, retain
-the same reproducer on the failing and fixed artifacts. A successful tiny test
-does not close a separate user loading failure.
+HF comparison, measured errors and tolerances. For a newly reported regression,
+include a reproducer for the affected environment; compare failing and fixed
+artifacts when available. A successful tiny test does not close a separate user
+loading failure.
