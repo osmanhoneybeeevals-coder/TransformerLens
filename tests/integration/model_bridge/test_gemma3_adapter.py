@@ -20,7 +20,7 @@ from transformer_lens.model_bridge.sources._bridge_builder import (
 )
 
 
-def _tiny_gemma3_bridge():
+def _tiny_gemma3_hf():
     cfg = Gemma3TextConfig(
         vocab_size=200,
         hidden_size=64,
@@ -37,10 +37,50 @@ def _tiny_gemma3_bridge():
     )
     cfg._attn_implementation = "eager"
     torch.manual_seed(42)
-    hf = Gemma3ForCausalLM(cfg).eval()
+    return Gemma3ForCausalLM(cfg).eval()
+
+
+def _tiny_gemma3_bridge():
+    hf = _tiny_gemma3_hf()
     return build_bridge_from_module(
-        hf, "Gemma3ForCausalLM", hf_config=copy.deepcopy(cfg), tokenizer=None, device="cpu"
+        hf, "Gemma3ForCausalLM", hf_config=copy.deepcopy(hf.config), tokenizer=None, device="cpu"
     ).eval()
+
+
+@pytest.mark.parametrize("seq_len", [1, 8, 9, 32])
+def test_gemma3_raw_and_processed_against_independent_hf(seq_len: int) -> None:
+    """Check both numerical contracts across the local-attention boundary.
+
+    The HF oracle is independent: bridge construction wraps modules in place.
+    This tiny fp32 CPU test does not certify downloaded checkpoints or bf16.
+    """
+    hf = _tiny_gemma3_hf()
+    bridge = build_bridge_from_module(
+        copy.deepcopy(hf),
+        "Gemma3ForCausalLM",
+        hf_config=copy.deepcopy(hf.config),
+        tokenizer=None,
+        device="cpu",
+    ).eval()
+    torch.manual_seed(7)
+    tokens = torch.randint(3, hf.config.vocab_size, (1, seq_len))
+    with torch.no_grad():
+        expected = hf(tokens).logits
+        raw = bridge(tokens)
+    assert torch.isfinite(expected).all()
+    assert torch.isfinite(raw).all()
+    torch.testing.assert_close(raw, expected, atol=1e-4, rtol=0)
+
+    bridge.enable_compatibility_mode()
+    with torch.no_grad():
+        processed = bridge(tokens)
+    assert torch.isfinite(processed).all()
+    torch.testing.assert_close(
+        processed.float().log_softmax(dim=-1),
+        expected.float().log_softmax(dim=-1),
+        atol=1e-4,
+        rtol=0,
+    )
 
 
 class TestGemma3CompatibilityMode:

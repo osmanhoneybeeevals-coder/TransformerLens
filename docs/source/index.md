@@ -59,6 +59,7 @@ content/contributing
 content/hook_system
 content/drivers
 content/compatibility_mode
+content/gemma3_validation
 content/ssm_interpretability
 content/projection_kernel
 content/jacobian_lens_fitting
