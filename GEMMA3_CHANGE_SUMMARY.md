@@ -72,3 +72,9 @@ The separate vocabulary-size report remains unverified. A normalization fix does
 - [Public 2.16.1 package metadata](https://pypi.org/project/transformer-lens/2.16.1/)
 
 Historical measurements were recorded in `triage_1121_gemma3_logits.md`, `gemma-3-arch.md`, and `release_notes_v2.16.1_2026-06-27.md`. Those internal source files were left unchanged. Private review and Drive links remain in the accompanying internal Word draft.
+
+## Follow up repair for component verification
+
+The current component-test path was repaired after reviewing upstream #1119 and #1120. Gemma 3 text and multimodal adapters now bind the correct local/global RoPE for each layer. The attention input generator supplies explicit causal/sliding-window masks and surfaces configured rotary errors instead of hiding them with identity rotations.
+
+Ten new regression cases verify RoPE inputs, isolated attention parity and post-normalization block-hook ablations. The expanded targeted suite passed 498 tests. The block hooks matched HF interventions and needed no runtime forward change. See [the technical verification note](GEMMA3_TECHNICAL_VERIFICATION.md#component-rope-and-block-hook-repair) for the reproduced failures, commands and coverage limits. This repair changes component-test setup; it does not add a normalization or dtype fix.

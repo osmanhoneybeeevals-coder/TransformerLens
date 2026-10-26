@@ -1,7 +1,7 @@
 # Gemma 3 technical verification note
 
 Verification date: 26 October 2026  
-Status: scoped CPU float32 verification; draft for review
+Status: CPU float32 verification plus component RoPE and block-hook regression coverage; draft for review
 
 ## Purpose and code identity
 
@@ -13,7 +13,7 @@ This note records the verification of the documentation and regression-test foll
 - Documentation scope update: `c3493c59ade9d6dfb5406558375eaf68e72b2793`.
 - Branch head before this note: `2f16776f3ad52393876853166fca64c42acd8910`.
 
-The follow-through changes documentation and tests. It does not modify runtime normalization or dtype handling. Historical notes report an epsilon-placement correction, but this verification does not recreate that historical failure or establish the exact historical release artifact.
+The initial follow-through changed documentation and tests. The later component-test repair below also changes test-input generation and per-layer RoPE wiring. Neither change modifies runtime normalization or dtype handling. Historical notes report an epsilon-placement correction, but this verification does not recreate that historical failure or establish the exact historical release artifact.
 
 ## Environment and fixture
 
@@ -101,3 +101,41 @@ The result supports the tested CPU float32 contracts without further normalizati
 - The fork PR remains a draft. Upstream documentation publication is pending; upstream PR creation previously returned 403.
 
 Untested configurations are not classified as broken. Historical source records remain unchanged.
+
+## Component RoPE and block hook repair
+
+Review of upstream PRs #1119 and #1120 prompted a fresh check of the current component-test path. This repair is against the current branch baseline, not a modification of those already merged PRs.
+
+### Reproduced failures
+
+With Transformers 5.13.0, Gemma 3 rotary embedding requires a layer type. The existing shared rotary callable omitted it; the component input generator caught the resulting error and substituted identity rotations. The new text and multimodal tests both failed before the fix: 120 of 128 cosine elements differed from HF, with maximum absolute difference 1.9899924993515015.
+
+After repairing the rotary binding, direct attention comparison exposed a second mismatch: the input generator supplied no mask, so standalone HF attention and the bridge used different causal semantics. Supplying the same explicit mask resolved that mismatch.
+
+### Implementation
+
+- Both Gemma 3 adapters bind the rotary callable separately for each layer type. The template uses the first layer's type; re-running setup is safe. The helper also selects separate local/global rotary modules when that older HF layout is present.
+- PositionEmbeddingsAttentionBridge generates an explicit causal mask and applies the wrapped layer's sliding-window limit where present. This affects component-test input generation, not the normal forward path.
+- Errors from a configured rotary callable now propagate instead of silently falling back to identity rotations. An unconfigured synthetic component still retains its existing identity placeholder.
+- No BlockBridge forward modification was needed. New ablation checks verify that attention-output and MLP-output aliases fire once after post-normalization and match equivalent independent HF interventions.
+
+### New regression coverage
+
+`tests/integration/model_bridge/test_gemma3_component_rope.py` contributes ten cases across tiny text and multimodal models: local/global RoPE values and attention-output parity, template wiring, explicit propagation of rotary failures, and post-norm attention/MLP ablations. Each model has one sliding-attention and one full-attention layer, with sequence length 16 for the component checks and window 8. Tests assert that future keys are masked, distant keys are masked only for the local layer, and local/global rotations differ.
+
+The expanded run passed **498 tests with 22 warnings in 120.95 seconds**. It included the ten new cases, the earlier Gemma 3 parity tests, tiny multimodal image-path regressions, text/multimodal adapter unit tests, RMSNorm-offset tests and the generalized-component unit directory. Mypy passed for 389 source files. This does not establish pretrained, GPU, reduced-precision or full-suite certification.
+
+Reproduce the expanded run:
+
+```bash
+uv run --no-sync pytest \
+  tests/integration/model_bridge/test_gemma3_component_rope.py \
+  tests/integration/model_bridge/test_gemma3_adapter.py \
+  tests/integration/model_bridge/test_gemma3_multimodal_tiny.py \
+  tests/unit/model_bridge/supported_architectures/test_gemma3_adapter.py \
+  tests/unit/model_bridge/supported_architectures/test_gemma3_multimodal_adapter.py \
+  tests/unit/model_bridge/supported_architectures/test_gemma_rmsnorm_offset.py \
+  tests/unit/model_bridge/generalized_components -q
+```
+
+The environment remains Python 3.12.14, PyTorch 2.11.0+cu130 and Transformers 5.13.0, on CPU. Historical 41-test and numerical-error results above describe the earlier phase; the 498-test result describes this repair.

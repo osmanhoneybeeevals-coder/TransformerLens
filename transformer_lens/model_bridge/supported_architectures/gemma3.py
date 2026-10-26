@@ -1,6 +1,7 @@
 """Gemma3 architecture adapter."""
 
 
+from functools import partial
 from typing import Any
 
 from transformer_lens.conversion_utils.conversion_steps import TransposeTensorConversion
@@ -21,6 +22,27 @@ from transformer_lens.model_bridge.generalized_components.position_embeddings_at
 )
 
 
+def _wire_gemma3_component_rope(adapter: Any, hf_model: Any, bridge_model: Any) -> None:
+    """Bind the component-test rotary callable to each layer's attention type."""
+    lm = hf_model
+    for segment in adapter._testing_lm_attr.split("."):
+        lm = getattr(lm, segment)
+
+    def rotary_for_layer(index: int) -> Any:
+        layer_type = lm.config.layer_types[index]
+        # Older HF versions expose separate local and global rotary modules.
+        if hasattr(lm, "rotary_emb_local"):
+            rotary = lm.rotary_emb_local if layer_type == "sliding_attention" else lm.rotary_emb
+            return partial(rotary)
+        return partial(lm.rotary_emb, layer_type=layer_type)
+
+    if bridge_model is not None:
+        for index, block in enumerate(bridge_model.blocks):
+            block.attn.set_rotary_emb(rotary_for_layer(index))
+    template = adapter.get_generalized_component("blocks.0.attn")
+    template.set_rotary_emb(rotary_for_layer(0))
+
+
 def _enable_native_qk_norm_autograd(bridge_model: Any) -> None:
     """Component tests grad-check through the wrapped Q/K norms; delegate them
     to HF's native layernorm autograd (shared by text and multimodal Gemma-3)."""
@@ -38,6 +60,8 @@ def _enable_native_qk_norm_autograd(bridge_model: Any) -> None:
 
 class Gemma3ArchitectureAdapter(ArchitectureAdapter):
     """Architecture adapter for Gemma3 models."""
+
+    _testing_wire_rotary = False
 
     def __init__(self, cfg: Any) -> None:
         """Initialize the Gemma3 architecture adapter."""
@@ -125,10 +149,7 @@ class Gemma3ArchitectureAdapter(ArchitectureAdapter):
         }
 
     def setup_component_testing(self, hf_model: Any, bridge_model: Any = None) -> None:
-        """Wire local RoPE + eager attention; q/k norms delegate to HF autograd.
-
-        Gemma-3 uses dual RoPE (global + local); component tests share the local
-        instance across all layers (layers on global RoPE accept the tradeoff).
-        """
+        """Wire per-layer RoPE + eager attention; q/k norms use HF autograd."""
         super().setup_component_testing(hf_model, bridge_model)
+        _wire_gemma3_component_rope(self, hf_model, bridge_model)
         _enable_native_qk_norm_autograd(bridge_model)
