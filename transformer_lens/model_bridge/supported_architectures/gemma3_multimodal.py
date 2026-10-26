@@ -26,6 +26,7 @@ from transformer_lens.model_bridge.generalized_components.position_embeddings_at
 )
 from transformer_lens.model_bridge.supported_architectures.gemma3 import (
     _enable_native_qk_norm_autograd,
+    _wire_gemma3_component_rope,
 )
 
 
@@ -43,6 +44,7 @@ class Gemma3MultimodalArchitectureAdapter(ArchitectureAdapter):
     """
 
     _testing_lm_attr = "model.language_model"
+    _testing_wire_rotary = False
 
     def __init__(self, cfg: Any) -> None:
         """Initialize the Gemma3 multimodal architecture adapter."""
@@ -133,6 +135,7 @@ class Gemma3MultimodalArchitectureAdapter(ArchitectureAdapter):
         }
 
     def setup_component_testing(self, hf_model: Any, bridge_model: Any = None) -> None:
-        """Wire rotary + eager, then enable native autograd on the Q/K norms."""
+        """Wire per-layer RoPE + eager, then enable native Q/K norm autograd."""
         super().setup_component_testing(hf_model, bridge_model)
+        _wire_gemma3_component_rope(self, hf_model, bridge_model)
         _enable_native_qk_norm_autograd(bridge_model)
